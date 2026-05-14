@@ -150,6 +150,8 @@ struct mmq_config {
 //                                                                                                                                                                x_max    y           nwarps  gs  gl gmx
 static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_amd_mfma   (const int /*cc*/, const int warp_size) { GGML_CUDA_MMQ_CONFIG_CASE(             64, 128, MMQ_MFMA_NWARPS, 16, 32, 128); }
 static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_amd_wmma   (const int /*cc*/, const int warp_size) { GGML_CUDA_MMQ_CONFIG_CASE(            128, 128,   256/warp_size, 16, 32, 128); }
+// RDNA3.5 (Strix Halo, gfx1151): wmma row, but mmq_y 128->64 and nwarps 8->4 to curb VGPR pressure. MoE mmq_x_max capped to 48 in mul_mat_q_case.
+static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_rdna3_5    (const int /*cc*/, const int warp_size) { GGML_CUDA_MMQ_CONFIG_CASE(            128,  64,               4, 16, 32, 128); }
 static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_rdna1      (const int /*cc*/, const int warp_size) { GGML_CUDA_MMQ_CONFIG_CASE(             64,  64,   256/warp_size,  8,  8,   0); }
 static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_amd_other  (const int /*cc*/, const int warp_size) { GGML_CUDA_MMQ_CONFIG_CASE(             64, 128,   256/warp_size,  8,  8,   0); }
 static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_turing_plus(const int /*cc*/, const int warp_size) { GGML_CUDA_MMQ_CONFIG_CASE(            128, 128,   256/warp_size,  8, 16,  48); }
@@ -159,6 +161,9 @@ static constexpr __host__ __device__ mmq_config ggml_cuda_mmq_get_config_default
 static __host__ mmq_config ggml_cuda_mmq_get_config(const int cc, const int warp_size) {
     if (amd_mfma_available(cc)) {
         return ggml_cuda_mmq_get_config_amd_mfma(cc, warp_size);
+    }
+    if (GGML_CUDA_CC_IS_RDNA3_5(cc)) {
+        return ggml_cuda_mmq_get_config_rdna3_5(cc, warp_size);
     }
     if (amd_wmma_available(cc)) {
         return ggml_cuda_mmq_get_config_amd_wmma(cc, warp_size);
@@ -181,6 +186,8 @@ static __host__ mmq_config ggml_cuda_mmq_get_config(const int cc, const int warp
 static constexpr __device__ mmq_config ggml_cuda_mmq_get_config() {
 #if defined(AMD_MFMA_AVAILABLE)
     return ggml_cuda_mmq_get_config_amd_mfma(0, ggml_cuda_get_physical_warp_size());
+#elif defined(GGML_USE_HIP) && defined(RDNA3_5)
+    return ggml_cuda_mmq_get_config_rdna3_5(0, ggml_cuda_get_physical_warp_size());
 #elif defined(AMD_WMMA_AVAILABLE)
     return ggml_cuda_mmq_get_config_amd_wmma(0, ggml_cuda_get_physical_warp_size());
 #elif defined(GGML_USE_HIP) && defined(RDNA1)
@@ -4088,7 +4095,11 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
     const int warp_size = ggml_cuda_info().devices[id].warp_size;
     const int nwarps    = mmq_get_nwarps_host(cc, warp_size);
 
-    const int mmq_x_max = get_mmq_x_max_host(cc);
+    // RDNA3.5 MoE path: cap tiles to 48 to preserve the per-expert-dispatch VGPR/perf
+    // balance; the dense path keeps the full 128 from the rdna3_5 config row.
+    const int mmq_x_max = (GGML_CUDA_CC_IS_RDNA3_5(cc) && args.expert_bounds != nullptr)
+        ? 48
+        : get_mmq_x_max_host(cc);
     const int mmq_y = get_mmq_y_host(cc);
 
     int mmq_x_best  = 0;
