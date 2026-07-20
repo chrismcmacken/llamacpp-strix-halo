@@ -219,6 +219,7 @@ struct ggml_cuda_mmq_config {
 #include "mmq-config-cdna.cuh"
 #include "mmq-config-rdna2.cuh"
 #include "mmq-config-rdna4.cuh"
+#include "mmq-config-rdna3_5.cuh"
 
 #undef CASE
 
@@ -226,6 +227,9 @@ static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type ty
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_CDNA(cc)) {
             return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
+        }
+        if (GGML_CUDA_CC_IS_RDNA3_5(cc)) {
+            return ggml_cuda_mmq_get_config_rdna3_5(type, J, fallback);
         }
         if (amd_wmma_available(cc)) {
             return ggml_cuda_mmq_get_config_rdna4(type, J, fallback);
@@ -245,6 +249,8 @@ static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(ggml_t
 #ifdef GGML_USE_HIP
 #ifdef CDNA
     return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
+#elif defined(RDNA3_5)
+    return ggml_cuda_mmq_get_config_rdna3_5(type, J, fallback);
 #elif defined(AMD_WMMA_AVAILABLE)
     return ggml_cuda_mmq_get_config_rdna4(type, J, fallback);
 #else
