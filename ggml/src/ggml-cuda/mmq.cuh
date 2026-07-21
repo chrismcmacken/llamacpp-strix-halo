@@ -1384,7 +1384,16 @@ void mul_mat_q_switch_J(ggml_backend_cuda_context & ctx, const mmq_args & args, 
     int J_best        = 0;
     int ntiles_J_best = INT_MAX;
 
-    for (int J = 8; J <= 128 && ntiles_J_best > 1; J += 8) {
+    // RDNA3.5 (gfx1151) MoE: cap the src1 column tile to 48. Expert matmuls are
+    // narrow per-expert dispatches; the wider J tiles the generic search would
+    // otherwise pick cost VGPR/occupancy without filling. Capping is what carried
+    // the bulk of the Strix Halo MoE prefill win in the pre-#24127 patch (the
+    // I=64 row tile alone recovers the dense win but leaves MoE ~14% short).
+    // Dense (expert_bounds == nullptr) keeps the full 128. Only restricts the
+    // choice among already-validated config rows, so it is correctness-safe.
+    const int J_max = (GGML_CUDA_CC_IS_RDNA3_5(cc) && args.expert_bounds != nullptr) ? 48 : 128;
+
+    for (int J = 8; J <= J_max && ntiles_J_best > 1; J += 8) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, fallback, cc);
         if (config.type == GGML_TYPE_COUNT) {
             continue;
